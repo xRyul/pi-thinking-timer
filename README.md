@@ -1,5 +1,8 @@
 # pi-thinking-timer
 
+![Screen Recording 2026-02-18 at 14 54 33](https://github.com/user-attachments/assets/4bea2cef-ff46-4bca-8589-e60f7658bc20)
+
+
 A small **pi** extension that shows a live timer next to the collapsed **Thinking** label.
 
 Instead of only:
