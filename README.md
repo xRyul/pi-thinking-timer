@@ -5,6 +5,8 @@
 
 A small **pi** extension that shows a live timer next to the collapsed **Thinking** label.
 
+![Thinking Timer demo](https://raw.githubusercontent.com/xRyul/pi-thinking-timer/main/assets/demo.gif)
+
 Instead of only:
 
 ```
