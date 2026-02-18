@@ -56,7 +56,7 @@ Clone and run pi with the local extension file:
 ```bash
 git clone https://github.com/xRyul/pi-thinking-timer
 cd pi-thinking-timer
-pi -e ./extensions/thinking-timer.ts
+pi -e ./thinking-timer.ts
 ```
 
 ## License
