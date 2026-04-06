@@ -195,8 +195,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
-		store.theme = ctx.ui.theme;
-		ctx.ui.setWorkingMessage();
+		resetAll(ctx);
 	});
 
 	pi.on("message_update", async (event, ctx) => {
@@ -244,9 +243,6 @@ export default function (pi: ExtensionAPI) {
 		if (store.starts.size === 0) stopTicker();
 	});
 
-	pi.on("session_switch", async (_event, ctx) => {
-		resetAll(ctx);
-	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
 		resetAll(ctx);
