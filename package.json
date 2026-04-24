@@ -1,6 +1,6 @@
 {
   "name": "pi-thinking-timer",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Pi extension that shows a live timer next to collapsed Thinking blocks.",
   "license": "MIT",
   "author": "xryul",
@@ -18,7 +18,7 @@
     "pi-extension"
   ],
   "pi": {
-    "extensions": ["./thinking-timer.ts"],
+    "extensions": ["./index.ts"],
     "image": "https://raw.githubusercontent.com/xRyul/pi-thinking-timer/main/assets/demo.gif"
   },
   "peerDependencies": {
@@ -26,7 +26,7 @@
     "@mariozechner/pi-tui": "*"
   },
   "files": [
-    "thinking-timer.ts",
+    "index.ts",
     "README.md",
     "LICENSE",
     "package.json"
