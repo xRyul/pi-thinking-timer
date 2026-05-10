@@ -16,9 +16,9 @@
  *   so it may break if pi changes how it renders collapsed thinking blocks.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { AssistantMessageComponent } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { AssistantMessageComponent } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 
 type Store = {
 	/** Active thinking blocks: key -> start time (ms since epoch) */
