@@ -9,7 +9,8 @@
  * instead of having a second "Working..."/"Thinking ..." indicator line.
  *
  * Implementation notes:
- * - We track thinking_start/thinking_end stream events to measure durations.
+ * - We time each contiguous visual run of thinking blocks until non-thinking
+ *   content or the assistant message ends.
  * - We monkey-patch AssistantMessageComponent.updateContent() to replace the
  *   hardcoded "Thinking..." label with "Thinking... <time>".
  * - This relies on internal rendering behavior (but uses exported components),
@@ -21,11 +22,11 @@ import { AssistantMessageComponent } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 
 type Store = {
-	/** Active thinking blocks: key -> start time (ms since epoch) */
+	/** Active visual thinking runs: key -> start time (ms since epoch) */
 	starts: Map<string, number>;
-	/** Finalized thinking blocks: key -> duration ms */
+	/** Finalized visual thinking runs: key -> duration ms */
 	durations: Map<string, number>;
-	/** Rendered label components for collapsed thinking blocks */
+	/** Rendered label components for collapsed thinking runs */
 	labels: Map<string, Text>;
 	/** Latest theme reference (ctx.ui.theme) */
 	theme?: ExtensionContext["ui"]["theme"];
@@ -62,6 +63,40 @@ function keyFor(timestamp: number, contentIndex: number): string {
 	return `${timestamp}:${contentIndex}`;
 }
 
+function getThinkingRunStart(content: any[], contentIndex: number): number | undefined {
+	if (!Array.isArray(content) || !Number.isInteger(contentIndex)) return undefined;
+	if (content[contentIndex]?.type !== "thinking") return undefined;
+
+	let runStart = contentIndex;
+	while (runStart > 0 && content[runStart - 1]?.type === "thinking") {
+		runStart--;
+	}
+	return runStart;
+}
+
+function getRenderedThinkingRunStarts(content: any[]): number[] {
+	const runStarts: number[] = [];
+	for (let i = 0; i < content.length; ) {
+		if (content[i]?.type !== "thinking") {
+			i++;
+			continue;
+		}
+
+		const runStart = i;
+		let hasVisibleThinking = false;
+		while (i < content.length && content[i]?.type === "thinking") {
+			const thinking = content[i]?.thinking;
+			if (typeof thinking === "string" && thinking.trim()) {
+				hasVisibleThinking = true;
+			}
+			i++;
+		}
+
+		if (hasVisibleThinking) runStarts.push(runStart);
+	}
+	return runStarts;
+}
+
 function ensureAssistantMessagePatchInstalled(): void {
 	const proto: any = AssistantMessageComponent.prototype as any;
 	if (proto[PATCH_KEY]) return;
@@ -79,15 +114,9 @@ function ensureAssistantMessagePatchInstalled(): void {
 			if (!this.hideThinkingBlock) return;
 			if (!this.contentContainer || !Array.isArray(this.contentContainer.children)) return;
 
-			// Find thinking content indices that would produce a collapsed label.
-			const thinkingIndices: number[] = [];
-			for (let i = 0; i < message.content.length; i++) {
-				const c = message.content[i];
-				if (c?.type === "thinking" && typeof c.thinking === "string" && c.thinking.trim()) {
-					thinkingIndices.push(i);
-				}
-			}
-			if (thinkingIndices.length === 0) return;
+			// Pi renders one collapsed label for each contiguous run of thinking blocks.
+			const thinkingRunStarts = getRenderedThinkingRunStarts(message.content);
+			if (thinkingRunStarts.length === 0) return;
 
 			// Find the Text components that currently contain the hardcoded "Thinking..." label.
 			const labelComponents: Text[] = [];
@@ -101,21 +130,21 @@ function ensureAssistantMessagePatchInstalled(): void {
 			}
 			if (labelComponents.length === 0) return;
 
-			const count = Math.min(thinkingIndices.length, labelComponents.length);
+			const count = Math.min(thinkingRunStarts.length, labelComponents.length);
 			for (let j = 0; j < count; j++) {
-				const contentIndex = thinkingIndices[j]!;
+				const runStart = thinkingRunStarts[j]!;
 				const label = labelComponents[j]!;
-				const k = keyFor(message.timestamp, contentIndex);
+				const k = keyFor(message.timestamp, runStart);
 				store.labels.set(k, label);
 
 				// Apply either live or finalized duration if we have it.
 				let ms: number | null = null;
 				const start = store.starts.get(k);
 				const dur = store.durations.get(k);
-				if (dur !== undefined) {
-					ms = dur;
-				} else if (start !== undefined) {
+				if (start !== undefined) {
 					ms = Date.now() - start;
+				} else if (dur !== undefined) {
+					ms = dur;
 				}
 
 				// Only override label when we have timing info (or when live),
@@ -169,7 +198,7 @@ export default function (pi: ExtensionAPI) {
 		ticker = setInterval(tick, 100);
 	}
 
-	function finalizeThinkingBlock(k: string, endTimeMs = Date.now()) {
+	function finalizeThinkingRun(k: string, endTimeMs = Date.now()) {
 		const s = getStore();
 		if (!s) return;
 		const start = s.starts.get(k);
@@ -181,6 +210,15 @@ export default function (pi: ExtensionAPI) {
 		const label = s.labels.get(k);
 		if (label) {
 			label.setText(makeThinkingLabel(s.theme, dur));
+		}
+	}
+
+	function finalizeThinkingRunsForMessage(timestamp: number, endTimeMs = Date.now(), except?: string) {
+		const prefix = `${timestamp}:`;
+		for (const k of [...store.starts.keys()]) {
+			if (k !== except && k.startsWith(prefix)) {
+				finalizeThinkingRun(k, endTimeMs);
+			}
 		}
 	}
 
@@ -204,10 +242,18 @@ export default function (pi: ExtensionAPI) {
 		const se = event.assistantMessageEvent as any;
 		if (!se || typeof se.type !== "string") return;
 
+		const msg = se.partial ?? se.message ?? se.error ?? event.message;
+		if (!msg || msg.role !== "assistant" || typeof msg.timestamp !== "number") return;
+
 		if (se.type === "thinking_start" || se.type === "thinking_delta") {
-			const msg = se.partial;
-			const k = keyFor(msg.timestamp, se.contentIndex);
+			const runStart = getThinkingRunStart(msg.content, se.contentIndex);
+			if (runStart === undefined) return;
+
+			const k = keyFor(msg.timestamp, runStart);
+			// A different active run in this message is no longer contiguous.
+			finalizeThinkingRunsForMessage(msg.timestamp, Date.now(), k);
 			if (!store.starts.has(k)) {
+				store.durations.delete(k);
 				store.starts.set(k, Date.now());
 			}
 			startTicker();
@@ -217,32 +263,25 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (se.type === "thinking_end") {
-			const msg = se.partial;
-			const k = keyFor(msg.timestamp, se.contentIndex);
-			finalizeThinkingBlock(k);
-			if (store.starts.size === 0) stopTicker();
+			// Pi may immediately open another adjacent thinking block. Keep the visual
+			// run active until non-thinking content (or message_end) proves it ended.
+			tick();
 			return;
 		}
-	});
 
-	// Safety: if a message ends while a thinking_start was seen but thinking_end was not,
-	// finalize any active thinking blocks for that message.
-	pi.on("message_end", async (event, ctx) => {
-		store.theme = ctx.ui.theme;
-		const msg: any = event.message;
-		if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content)) return;
-
-		for (let i = 0; i < msg.content.length; i++) {
-			const c = msg.content[i];
-			if (c?.type !== "thinking") continue;
-			const k = keyFor(msg.timestamp, i);
-			if (store.starts.has(k)) {
-				finalizeThinkingBlock(k, Date.now());
-			}
-		}
+		finalizeThinkingRunsForMessage(msg.timestamp);
 		if (store.starts.size === 0) stopTicker();
 	});
 
+	// Safety: finalize any visual thinking run still active when its message ends.
+	pi.on("message_end", async (event, ctx) => {
+		store.theme = ctx.ui.theme;
+		const msg: any = event.message;
+		if (!msg || msg.role !== "assistant" || typeof msg.timestamp !== "number") return;
+
+		finalizeThinkingRunsForMessage(msg.timestamp);
+		if (store.starts.size === 0) stopTicker();
+	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
 		resetAll(ctx);
